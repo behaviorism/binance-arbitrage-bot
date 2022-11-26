@@ -1,25 +1,13 @@
-export interface Config {
-  api_key: string;
-  secret_key: string;
-  profit_threshold: number;
-  transaction_fees: number;
-}
+import Pair from "./pair";
 
-export interface PairInfo {
-  baseAsset: string;
-  quoteAsset: string;
-  lotSize: number;
-  minNotional: number;
-}
-
-export type Symbol = string;
+export type PairSymbol = string;
 export type BestBid = string;
 export type BestBidAmount = string;
 export type BestAsk = string;
 export type BestAskAmount = string;
 
 export interface BookTickerWSMessage {
-  s: Symbol;
+  s: PairSymbol;
   b: BestBid;
   B: BestBidAmount;
   a: BestAsk;
@@ -27,23 +15,11 @@ export interface BookTickerWSMessage {
 }
 
 export interface BookTickerApiPair {
-  symbol: Symbol;
+  symbol: PairSymbol;
   bidPrice: BestBid;
   bidQty: BestBidAmount;
   askPrice: BestAsk;
   askPriceQty: BestAskAmount;
 }
 
-export interface PairBookTick {
-  symbol: Symbol;
-
-  bestBid: number;
-  bestBidAmt: number;
-
-  bestAsk: number;
-  bestAskAmt: number;
-}
-
-export type Pair = PairInfo & PairBookTick;
-
-export type Pairs = Map<Symbol, Pair>;
+export type Pairs = Map<PairSymbol, Pair>;

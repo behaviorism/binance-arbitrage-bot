@@ -1,105 +1,50 @@
-import { loadConfig } from "./config";
-// @ts-ignore
-import { Spot } from "@binance/connector";
-import {
-  BookTickerWSMessage,
-  Config,
-  Pair,
-  PairBookTick,
-  Pairs,
-} from "./types";
-import {
-  apiTickToPair,
-  floorDecimals,
-  fmtNumber,
-  isPairEnabled,
-  wsTickToPair,
-} from "./utils";
+import { Config, loadConfig } from "./config";
+import { fmtNumber, matchDecimalPlaces } from "./utils";
+import https from "https";
+import BinanceClient from "./binanceClient";
+import Pair from "./pair";
 
 class ArbitrageBot {
   config: Config;
-  client: Spot;
+  client: BinanceClient;
 
-  bookTickerWS: any;
-  pairs: Pairs = new Map();
+  locked: boolean;
 
   constructor(config: Config) {
     this.config = config;
-    this.client = new Spot(config.api_key, config.secret_key, {
+    this.client = new BinanceClient(config.api_key, config.secret_key, {
+      httpsAgent: new https.Agent({ keepAlive: true }),
       // baseURL: "https://testnet.binance.vision",
     });
+    this.locked = false;
   }
 
   async init() {
     try {
-      await this.setupPairs();
-      await this.fetchBooks();
-      await this.initBookTicker();
-    } catch {
-      this.cleanup();
-    }
-  }
-
-  async setupPairs() {
-    const {
-      data: { symbols },
-    } = await this.client.exchangeInfo();
-
-    for (let sym of symbols) {
-      this.pairs.set(sym.symbol, {
-        baseAsset: sym.baseAsset,
-        quoteAsset: sym.quoteAsset,
-        lotSize: parseFloat(sym.filters[2]!.minQty),
-        minNotional: parseFloat(sym.filters[3]!.minNotional),
-      } as any);
-    }
-  }
-
-  async fetchBooks() {
-    const { data } = await this.client.bookTicker();
-
-    for (let tick of data) {
-      this.updatePair(tick.s, apiTickToPair(tick));
-    }
-  }
-
-  updatePair(symbol: string, info: PairBookTick) {
-    const oldPair = this.pairs.get(symbol);
-
-    if (oldPair) {
-      const newPair = { ...oldPair, ...info };
-      this.pairs.set(symbol, newPair);
-      return newPair;
-    }
-
-    return;
-  }
-
-  initBookTicker() {
-    return new Promise<void>((resolve) => {
-      this.bookTickerWS = this.client.bookTickerWS(null, {
-        open: () => {
-          console.log("started book ticker");
-          resolve();
-        },
-        error: (err: any) => console.log(`book ticker error: ${err.message}`),
-        message: (msg: string) => this.handleBookTicker(JSON.parse(msg)),
-        close: () => this.cleanup(),
+      await this.client.init();
+      await this.client.initBookTicker(async (msg) => {
+        if (!this.locked) {
+          this.locked = true;
+          await this.handleBookTicker(msg);
+          this.locked = false;
+        }
       });
-    });
+    } catch (err) {
+      this.client.cleanup();
+      throw err;
+    }
   }
 
-  handleBookTicker(tick: BookTickerWSMessage) {
-    const newPair = this.updatePair(tick.s, wsTickToPair(tick));
+  async handleBookTicker(newPair: Pair) {
+    const mids = this.client.getMidsPairs(newPair, this.config.fiat_symbol);
 
-    if (!newPair) {
-      return;
-    }
+    for (let baseToQuote of mids) {
+      let [baseToFiat, quoteToFiat] = this.client.getFiatPairs(
+        baseToQuote,
+        this.config.fiat_symbol
+      );
 
-    for (let baseToQuote of this.getMidsPairs(newPair)) {
-      let [baseToFiat, quoteToFiat] = this.getFiatPairs(baseToQuote);
-
-      if (!(isPairEnabled(baseToFiat) && isPairEnabled(quoteToFiat))) {
+      if (!(baseToFiat?.isEnabled && quoteToFiat?.isEnabled)) {
         continue;
       }
 
@@ -109,7 +54,7 @@ class ArbitrageBot {
         quoteToFiat
       );
 
-      if (directReturn > this.config.profit_threshold) {
+      if (directReturn >= this.config.profit_threshold) {
         let maxFiat = this.calcDirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -117,15 +62,19 @@ class ArbitrageBot {
         );
 
         console.log(
-          `found direct arbitrage opportunity for ${
-            baseToQuote.symbol
-          } | Return: ${fmtNumber(
+          `[DIRECT][${baseToQuote.symbol}]: RETURN: ${fmtNumber(
             directReturn * 100
-          )}% | Liquidity: ${fmtNumber(maxFiat)} USDT`
+          )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        this.directArbitrage(baseToFiat, baseToQuote, quoteToFiat);
-      } else if (indirectReturn > this.config.profit_threshold) {
+        await this.directArbitrage(
+          baseToFiat,
+          baseToQuote,
+          quoteToFiat,
+          maxFiat
+        );
+        break;
+      } else if (indirectReturn >= this.config.profit_threshold) {
         let maxFiat = this.calcIndirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -133,35 +82,20 @@ class ArbitrageBot {
         );
 
         console.log(
-          `found indirect arbitrage opportunity for ${
-            baseToQuote.symbol
-          } | Return: ${fmtNumber(
+          `[INDIRECT][${baseToQuote.symbol}]: RETURN: ${fmtNumber(
             indirectReturn * 100
-          )}% | Liquidity: ${fmtNumber(maxFiat)} USDT`
+          )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
+
+        await this.indirectArbitrage(
+          baseToFiat,
+          baseToQuote,
+          quoteToFiat,
+          maxFiat
+        );
+        break;
       }
     }
-  }
-
-  getMidsPairs(pair: Pair) {
-    if (pair.symbol.includes("USDT")) {
-      return Array.from(this.pairs.values()).filter(
-        (pair) =>
-          pair.symbol.includes(pair.symbol.split("USDT")[0]!) &&
-          isPairEnabled(pair)
-      );
-    } else if (isPairEnabled(pair)) {
-      return [pair];
-    }
-
-    return [];
-  }
-
-  getFiatPairs({ baseAsset, quoteAsset }: Pair): [Pair, Pair] {
-    return [
-      this.pairs.get(`${baseAsset}USDT`)!,
-      this.pairs.get(`${quoteAsset}USDT`)!,
-    ];
   }
 
   calcReturns(
@@ -176,111 +110,222 @@ class ArbitrageBot {
   }
 
   calcDirectReturn(baseToFiat: Pair, baseToQuote: Pair, quoteToFiat: Pair) {
-    return (
-      (1 / baseToFiat.bestAsk) * // USDT -- buy --> BASE
-        baseToQuote.bestBid * // BASE -- sell --> QUOTE
-        quoteToFiat.bestBid * // QUOTE -- sell --> USDT
-        (1 - this.config.transaction_fees) ** 3 - // fees for every transaction
-      1
+    const conversion = quoteToFiat.baseToQuote(
+      baseToQuote.baseToQuote(baseToFiat.quoteToBase(1))
     );
+    const fees = (1 - this.config.transaction_fees) ** 3;
+
+    return conversion * fees - 1;
   }
 
   calcIndirectReturn(baseToFiat: Pair, baseToQuote: Pair, quoteToFiat: Pair) {
-    return (
-      (1 / quoteToFiat.bestAsk) * // USDT -- buy --> QUOTE
-        (1 / baseToQuote.bestAsk) * // QUOTE -- buy --> BASE
-        baseToFiat.bestBid * // BASE -- sell --> USDT
-        (1 - this.config.transaction_fees) ** 3 - // fees for every transaction
-      1
+    const conversion = baseToFiat.baseToQuote(
+      baseToQuote.quoteToBase(quoteToFiat.quoteToBase(1))
     );
+    const fees = (1 - this.config.transaction_fees) ** 3;
+
+    return conversion * fees - 1;
   }
 
   calcDirectMaxFiat(baseToFiat: Pair, baseToQuote: Pair, quoteToFiat: Pair) {
-    // max USDT spent quick buying base
-    const maxFiatToBuyBase =
-      baseToFiat.bestAskAmt *
-      baseToFiat.bestAsk *
-      (1 - this.config.transaction_fees);
-    // max USDT spent quick selling base
-    const maxFiatToSellBase =
-      baseToQuote.bestBidAmt *
-      baseToFiat.bestAsk *
-      (1 - this.config.transaction_fees) ** 2;
-    // max USDT spent quick selling quote
-    const maxFiatToSellQuote =
-      quoteToFiat.bestBidAmt *
-      (1 / baseToQuote.bestBidAmt) *
-      baseToFiat.bestAsk *
-      (1 - this.config.transaction_fees) ** 3;
+    // max FIAT spendable buying base of mid pair
+    const maxBuyableBaseVal = baseToFiat.buyLiquidity / baseToFiat.buyRate;
+    // max FIAT spendable buying base of mid pair and selling it for quote of mid pair
+    const maxSellableBaseVal =
+      baseToQuote.sellLiquidity / // tradable base for quote
+      (1 - this.config.transaction_fees) / // out base
+      baseToFiat.buyRate; // buy base
+    // max FIAT spendable buying base of mid pair, selling it for quote of mid pair and selling it (quote of mid pair) for fiat
+    const maxSellableQuoteVal =
+      quoteToFiat.sellLiquidity / // sellable quote
+      (1 - this.config.transaction_fees) / // out quote
+      baseToQuote.sellRate / // sell base
+      (1 - this.config.transaction_fees) / // out base
+      baseToFiat.buyRate; // buy base
 
-    return Math.min(maxFiatToBuyBase, maxFiatToSellBase, maxFiatToSellQuote);
+    return Math.min(maxBuyableBaseVal, maxSellableBaseVal, maxSellableQuoteVal);
   }
 
   calcIndirectMaxFiat(baseToFiat: Pair, baseToQuote: Pair, quoteToFiat: Pair) {
-    // max USDT spent quick buying quote
-    const maxFiatToBuyQuote =
-      quoteToFiat.bestAskAmt *
-      quoteToFiat.bestAsk *
-      (1 - this.config.transaction_fees);
-    // max USDT spent quick buying base
-    const maxFiatToBuyBase =
-      baseToFiat.bestAskAmt *
-      (1 / baseToQuote.bestAsk) *
-      (1 / quoteToFiat.bestAsk) *
-      (1 - this.config.transaction_fees) ** 2;
-    // max USDT spent quick selling base
-    const maxFiatToSellBase =
-      baseToFiat.bestBidAmt *
-      (1 / baseToQuote.bestAsk) *
-      (1 / quoteToFiat.bestAsk) *
-      (1 - this.config.transaction_fees) ** 3;
+    // max FIAT spendable buying quote of mid pair
+    const maxBuyableQuoteVal = quoteToFiat.buyLiquidity / quoteToFiat.buyRate;
+    // max FIAT spendable buying quote of mid pair and using it to buy base of mid pair
+    const maxSellableQuoteVal =
+      baseToQuote.buyLiquidity / // tradable quote for base
+      baseToQuote.buyRate / // buy base
+      (1 - this.config.transaction_fees) / // out quote
+      quoteToFiat.buyRate; // buy quote
+    // max FIAT spendable buying quote if mid pair, using it to buy base of mid pair and selling it (base of mid pair) for fiat
+    const maxSellableBaseVal =
+      baseToFiat.sellLiquidity / // sellable quote
+      (1 - this.config.transaction_fees); // out quote
+    baseToQuote.buyRate / // buy base
+      (1 - this.config.transaction_fees) / // out quote
+      quoteToFiat.buyRate; // buy quote
 
-    return Math.min(maxFiatToBuyQuote, maxFiatToBuyBase, maxFiatToSellBase);
+    return Math.min(
+      maxBuyableQuoteVal,
+      maxSellableQuoteVal,
+      maxSellableBaseVal
+    );
   }
 
   async directArbitrage(
     baseToFiat: Pair,
     baseToQuote: Pair,
     quoteToFiat: Pair,
-    fiatAmt: number = 10
+    fiatAmt: number
   ) {
-    try {
-      const baseAmtOut = floorDecimals(fiatAmt * (1 / baseToFiat.bestAsk), 8);
-      let res = await this.client.newOrder(baseToFiat.symbol, "BUY", "LIMIT", {
-        price: baseToFiat.bestAsk.toString(),
-        quantity: baseAmtOut,
-        timeInForce: "FOK",
-      });
-      console.log(res);
+    if (fiatAmt > 40) {
+      fiatAmt = 40;
+    }
 
-      const baseAmtIn = floorDecimals(
+    try {
+      const baseAmtOut = matchDecimalPlaces(
+        baseToFiat.lotSize,
+        baseToFiat.quoteToBase(fiatAmt)
+      );
+      let start = Date.now();
+      let res = await this.client.inner
+        .newOrder(baseToFiat.symbol, "BUY", "LIMIT", {
+          price: baseToFiat.buyPrice.toString(),
+          quantity: baseAmtOut,
+          timeInForce: "FOK",
+        })
+        .catch(orderError(1));
+      console.log(Date.now() - start);
+
+      if (res.data.status === "EXPIRED") {
+        return;
+      }
+
+      const baseAmtIn = matchDecimalPlaces(
+        baseToQuote.lotSize,
         baseAmtOut * (1 - this.config.transaction_fees)
       );
-      await this.client.newOrder(baseToQuote.symbol, "SELL", "LIMIT", {
-        price: baseToQuote.bestBid.toString(),
-        quantity: baseAmtIn.toString(),
-        timeInForce: "FOK",
-      });
+      start = Date.now();
+      res = await this.client.inner
+        .newOrder(baseToQuote.symbol, "SELL", "LIMIT", {
+          price: baseToQuote.sellPrice.toString(),
+          quantity: baseAmtIn,
+          timeInForce: "FOK",
+        })
+        .catch(orderError(2));
+      console.log(Date.now() - start);
 
-      const quoteAmtIn = floorDecimals(
-        baseAmtIn * baseToQuote.bestBid * (1 - this.config.transaction_fees)
+      if (res.data.status === "EXPIRED") {
+        await this.client.inner
+          .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
+            quantity: matchDecimalPlaces(
+              baseToFiat.lotSize,
+              baseAmtOut * (1 - this.config.transaction_fees)
+            ),
+          })
+          .catch(orderError(2, true));
+        return;
+      }
+
+      const quoteAmtIn = matchDecimalPlaces(
+        quoteToFiat.lotSize,
+        baseToQuote.baseToQuote(baseAmtIn) * (1 - this.config.transaction_fees)
       );
-      await this.client.newOrder(quoteToFiat.symbol, "SELL", "LIMIT", {
-        price: quoteToFiat.bestBid.toString(),
-        quantity: quoteAmtIn.toString(),
-        timeInForce: "FOK",
-      });
+      start = Date.now();
+      await this.client.inner
+        .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
+          // price: quoteToFiat.sellPrice.toString(),
+          quantity: quoteAmtIn,
+          // timeInForce: "FOK",
+        })
+        .catch(orderError(3));
+      console.log(Date.now() - start);
     } catch (err: any) {
-      console.log(
-        `error while executing transactions: ${err.response.data.msg}`
-      );
+      console.log(`[${baseToQuote.symbol}]${err.message}`);
     }
   }
 
-  cleanup() {
-    this.client.unsubscribe(this.bookTickerWS);
+  async indirectArbitrage(
+    baseToFiat: Pair,
+    baseToQuote: Pair,
+    quoteToFiat: Pair,
+    fiatAmt: number
+  ) {
+    if (fiatAmt > 40) {
+      fiatAmt = 40;
+    }
+
+    try {
+      const quoteAmtOut = matchDecimalPlaces(
+        quoteToFiat.lotSize,
+        quoteToFiat.quoteToBase(fiatAmt)
+      );
+      let start = Date.now();
+      let res = await this.client.inner
+        .newOrder(quoteToFiat.symbol, "BUY", "LIMIT", {
+          price: quoteToFiat.buyPrice.toString(),
+          quantity: quoteAmtOut,
+          timeInForce: "FOK",
+        })
+        .catch(orderError(1));
+      console.log(Date.now() - start);
+
+      if (res.data.status === "EXPIRED") {
+        return;
+      }
+
+      const baseAmtOut = matchDecimalPlaces(
+        baseToQuote.lotSize,
+        baseToQuote.quoteToBase(
+          quoteAmtOut * (1 - this.config.transaction_fees)
+        )
+      );
+      start = Date.now();
+      res = await this.client.inner
+        .newOrder(baseToQuote.symbol, "BUY", "LIMIT", {
+          price: baseToQuote.buyPrice.toString(),
+          quantity: baseAmtOut,
+          timeInForce: "FOK",
+        })
+        .catch(orderError(2));
+      console.log(Date.now() - start);
+
+      if (res.data.status === "EXPIRED") {
+        await this.client.inner
+          .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
+            quantity: matchDecimalPlaces(
+              quoteToFiat.lotSize,
+              quoteAmtOut * (1 - this.config.transaction_fees)
+            ),
+          })
+          .catch(orderError(2, true));
+        return;
+      }
+
+      const baseAmtIn = matchDecimalPlaces(
+        baseToFiat.lotSize,
+        baseAmtOut * (1 - this.config.transaction_fees)
+      );
+      start = Date.now();
+      await this.client.inner
+        .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
+          // price: baseToFiat.sellPrice.toString(),
+          quantity: baseAmtIn,
+          // timeInForce: "FOK",
+        })
+        .catch(orderError(3));
+      console.log(Date.now() - start);
+    } catch (err: any) {
+      console.log(`[${baseToQuote.symbol}]${err.message}`);
+    }
   }
 }
+
+const orderError = (transactionN: number, fallout?: boolean) => (err: any) => {
+  throw new Error(
+    `[${fallout ? "FALLOUT-" : ""}TRANSACTION-${transactionN}]: ${
+      err.response.data.msg || err.message
+    }`
+  );
+};
 
 const init = async () => {
   const config = await loadConfig();

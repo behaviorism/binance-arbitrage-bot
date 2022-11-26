@@ -1,5 +1,12 @@
 import fs from "fs/promises";
-import { Config } from "./types";
+
+export interface Config {
+  api_key: string;
+  secret_key: string;
+  profit_threshold: number;
+  transaction_fees: number;
+  fiat_symbol: string;
+}
 
 export const loadConfig = async (): Promise<Config> => {
   try {
