@@ -200,7 +200,7 @@ class ArbitrageBot {
       // Check after first order if arbitrage is still available.
       // Otherwise, reverse first transaction
       if (
-        this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
+        this.calcDirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
         this.config.profit_threshold
       ) {
         console.log(
