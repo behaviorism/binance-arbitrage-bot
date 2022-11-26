@@ -206,6 +206,9 @@ class ArbitrageBot {
         .catch(orderError(1));
 
       if (res.data.status === "EXPIRED") {
+        console.log(
+          `[${baseToQuote.symbol}][TRANSACTION-1]: transaction failed`
+        );
         return;
       }
 
@@ -220,7 +223,10 @@ class ArbitrageBot {
         );
         await this.client.inner
           .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
-            quantity: baseAmtOut,
+            quantity: matchDecimalPlaces(
+              baseToFiat.lotSize,
+              baseAmtOut * (1 - this.config.transaction_fees)
+            ),
           })
           .catch(orderError(1, true));
         return;
@@ -296,6 +302,9 @@ class ArbitrageBot {
 
       // If first order failed, nothing happened
       if (res.data.status === "EXPIRED") {
+        console.log(
+          `[${baseToQuote.symbol}][TRANSACTION-1]: transaction failed`
+        );
         return;
       }
 
@@ -310,7 +319,10 @@ class ArbitrageBot {
         );
         await this.client.inner
           .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
-            quantity: quoteAmtOut,
+            quantity: matchDecimalPlaces(
+              quoteToFiat.lotSize,
+              quoteAmtOut * (1 - this.config.transaction_fees)
+            ),
           })
           .catch(orderError(1, true));
         return;
