@@ -55,6 +55,8 @@ class ArbitrageBot {
       );
 
       if (directReturn >= this.config.profit_threshold) {
+        console.log(baseToFiat, baseToQuote, quoteToFiat);
+
         let maxFiat = this.calcDirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -75,6 +77,8 @@ class ArbitrageBot {
         );
         break;
       } else if (indirectReturn >= this.config.profit_threshold) {
+        console.log(baseToFiat, baseToQuote, quoteToFiat);
+
         let maxFiat = this.calcIndirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -242,7 +246,6 @@ class ArbitrageBot {
         quoteToFiat.lotSize,
         baseToQuote.baseToQuote(baseAmtIn) * (1 - this.config.transaction_fees)
       );
-      console.log(quoteToFiat.sellPrice.toString());
       await this.client.inner
         .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
           // price: quoteToFiat.sellPrice.toString(),
@@ -332,7 +335,6 @@ class ArbitrageBot {
         baseToFiat.lotSize,
         baseAmtOut * (1 - this.config.transaction_fees)
       );
-      console.log(baseToFiat.sellPrice.toString());
       await this.client.inner
         .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
           // price: baseToFiat.sellPrice.toString(),
