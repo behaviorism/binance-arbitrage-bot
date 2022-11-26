@@ -211,6 +211,7 @@ class ArbitrageBot {
             quantity: baseAmtOut,
           })
           .catch(orderError(1, true));
+        return;
       }
 
       const baseAmtIn = matchDecimalPlaces(
@@ -298,6 +299,7 @@ class ArbitrageBot {
             quantity: quoteAmtOut,
           })
           .catch(orderError(1, true));
+        return;
       }
 
       const baseAmtOut = matchDecimalPlaces(
