@@ -185,7 +185,6 @@ class ArbitrageBot {
         baseToFiat.lotSize,
         baseToFiat.quoteToBase(fiatAmt)
       );
-      let start = Date.now();
       let res = await this.client.inner
         .newOrder(baseToFiat.symbol, "BUY", "LIMIT", {
           price: baseToFiat.buyPrice.toString(),
@@ -193,7 +192,6 @@ class ArbitrageBot {
           timeInForce: "FOK",
         })
         .catch(orderError(1));
-      console.log(Date.now() - start);
 
       if (res.data.status === "EXPIRED") {
         return;
@@ -203,7 +201,6 @@ class ArbitrageBot {
         baseToQuote.lotSize,
         baseAmtOut * (1 - this.config.transaction_fees)
       );
-      start = Date.now();
       res = await this.client.inner
         .newOrder(baseToQuote.symbol, "SELL", "LIMIT", {
           price: baseToQuote.sellPrice.toString(),
@@ -211,7 +208,6 @@ class ArbitrageBot {
           timeInForce: "FOK",
         })
         .catch(orderError(2));
-      console.log(Date.now() - start);
 
       if (res.data.status === "EXPIRED") {
         await this.client.inner
@@ -229,7 +225,6 @@ class ArbitrageBot {
         quoteToFiat.lotSize,
         baseToQuote.baseToQuote(baseAmtIn) * (1 - this.config.transaction_fees)
       );
-      start = Date.now();
       await this.client.inner
         .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
           // price: quoteToFiat.sellPrice.toString(),
@@ -237,7 +232,8 @@ class ArbitrageBot {
           // timeInForce: "FOK",
         })
         .catch(orderError(3));
-      console.log(Date.now() - start);
+
+      console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
     } catch (err: any) {
       console.log(`[${baseToQuote.symbol}]${err.message}`);
     }
@@ -258,7 +254,6 @@ class ArbitrageBot {
         quoteToFiat.lotSize,
         quoteToFiat.quoteToBase(fiatAmt)
       );
-      let start = Date.now();
       let res = await this.client.inner
         .newOrder(quoteToFiat.symbol, "BUY", "LIMIT", {
           price: quoteToFiat.buyPrice.toString(),
@@ -266,7 +261,6 @@ class ArbitrageBot {
           timeInForce: "FOK",
         })
         .catch(orderError(1));
-      console.log(Date.now() - start);
 
       if (res.data.status === "EXPIRED") {
         return;
@@ -278,7 +272,6 @@ class ArbitrageBot {
           quoteAmtOut * (1 - this.config.transaction_fees)
         )
       );
-      start = Date.now();
       res = await this.client.inner
         .newOrder(baseToQuote.symbol, "BUY", "LIMIT", {
           price: baseToQuote.buyPrice.toString(),
@@ -286,7 +279,6 @@ class ArbitrageBot {
           timeInForce: "FOK",
         })
         .catch(orderError(2));
-      console.log(Date.now() - start);
 
       if (res.data.status === "EXPIRED") {
         await this.client.inner
@@ -304,7 +296,6 @@ class ArbitrageBot {
         baseToFiat.lotSize,
         baseAmtOut * (1 - this.config.transaction_fees)
       );
-      start = Date.now();
       await this.client.inner
         .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
           // price: baseToFiat.sellPrice.toString(),
@@ -312,7 +303,8 @@ class ArbitrageBot {
           // timeInForce: "FOK",
         })
         .catch(orderError(3));
-      console.log(Date.now() - start);
+
+      console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
     } catch (err: any) {
       console.log(`[${baseToQuote.symbol}]${err.message}`);
     }
