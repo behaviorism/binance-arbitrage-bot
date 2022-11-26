@@ -75,15 +75,6 @@ class ArbitrageBot {
         );
         break;
       } else if (indirectReturn >= this.config.profit_threshold) {
-        console.log(
-          (((1 / quoteToFiat.buyPrice) * 1) / baseToQuote.buyPrice) *
-            baseToFiat.sellPrice
-        );
-        console.log(
-          quoteToFiat.buyPrice,
-          baseToQuote.buyPrice,
-          baseToFiat.sellPrice
-        );
         let maxFiat = this.calcIndirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -206,6 +197,22 @@ class ArbitrageBot {
         return;
       }
 
+      // Check after first order if arbitrage is still available.
+      // Otherwise, reverse first transaction
+      if (
+        this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
+        this.config.profit_threshold
+      ) {
+        console.log(
+          `[${baseToQuote.symbol}]: arbitrage opportunity consumed. Reversing...`
+        );
+        await this.client.inner
+          .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
+            quantity: baseAmtOut,
+          })
+          .catch(orderError(1, true));
+      }
+
       const baseAmtIn = matchDecimalPlaces(
         baseToQuote.lotSize,
         baseAmtOut * (1 - this.config.transaction_fees)
@@ -272,8 +279,25 @@ class ArbitrageBot {
         })
         .catch(orderError(1));
 
+      // If first order failed, nothing happened
       if (res.data.status === "EXPIRED") {
         return;
+      }
+
+      // Check after first order if arbitrage is still available.
+      // Otherwise, reverse first transaction
+      if (
+        this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
+        this.config.profit_threshold
+      ) {
+        console.log(
+          `[${baseToQuote.symbol}]: arbitrage opportunity consumed. Reversing...`
+        );
+        await this.client.inner
+          .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
+            quantity: quoteAmtOut,
+          })
+          .catch(orderError(1, true));
       }
 
       const baseAmtOut = matchDecimalPlaces(
