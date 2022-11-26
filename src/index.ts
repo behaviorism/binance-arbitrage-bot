@@ -239,6 +239,9 @@ class ArbitrageBot {
         .catch(orderError(2));
 
       if (res.data.status === "EXPIRED") {
+        console.log(
+          `[${baseToQuote.symbol}][TRANSACTION-2]: transaction failed. Reversing...`
+        );
         await this.client.inner
           .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
             quantity: matchDecimalPlaces(
@@ -328,6 +331,9 @@ class ArbitrageBot {
         .catch(orderError(2));
 
       if (res.data.status === "EXPIRED") {
+        console.log(
+          `[${baseToQuote.symbol}][TRANSACTION-2]: transaction failed. Reversing...`
+        );
         await this.client.inner
           .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
             quantity: matchDecimalPlaces(
