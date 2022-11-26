@@ -176,8 +176,8 @@ class ArbitrageBot {
     quoteToFiat: Pair,
     fiatAmt: number
   ) {
-    if (fiatAmt > 40) {
-      fiatAmt = 40;
+    if (fiatAmt > 30) {
+      fiatAmt = 30;
     }
 
     try {
@@ -246,8 +246,8 @@ class ArbitrageBot {
     quoteToFiat: Pair,
     fiatAmt: number
   ) {
-    if (fiatAmt > 40) {
-      fiatAmt = 40;
+    if (fiatAmt > 30) {
+      fiatAmt = 30;
     }
 
     try {
