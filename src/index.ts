@@ -79,6 +79,11 @@ class ArbitrageBot {
           (((1 / quoteToFiat.buyPrice) * 1) / baseToQuote.buyPrice) *
             baseToFiat.sellPrice
         );
+        console.log(
+          quoteToFiat.buyPrice,
+          baseToQuote.buyPrice,
+          baseToFiat.sellPrice
+        );
         let maxFiat = this.calcIndirectMaxFiat(
           baseToFiat,
           baseToQuote,
