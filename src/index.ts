@@ -75,6 +75,10 @@ class ArbitrageBot {
         );
         break;
       } else if (indirectReturn >= this.config.profit_threshold) {
+        console.log(
+          (((1 / quoteToFiat.buyPrice) * 1) / baseToQuote.buyPrice) *
+            baseToFiat.sellPrice
+        );
         let maxFiat = this.calcIndirectMaxFiat(
           baseToFiat,
           baseToQuote,
