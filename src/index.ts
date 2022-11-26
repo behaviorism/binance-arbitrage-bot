@@ -225,6 +225,7 @@ class ArbitrageBot {
         quoteToFiat.lotSize,
         baseToQuote.baseToQuote(baseAmtIn) * (1 - this.config.transaction_fees)
       );
+      console.log(quoteToFiat.sellPrice.toString());
       await this.client.inner
         .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
           // price: quoteToFiat.sellPrice.toString(),
@@ -296,6 +297,7 @@ class ArbitrageBot {
         baseToFiat.lotSize,
         baseAmtOut * (1 - this.config.transaction_fees)
       );
+      console.log(baseToFiat.sellPrice.toString());
       await this.client.inner
         .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
           // price: baseToFiat.sellPrice.toString(),
