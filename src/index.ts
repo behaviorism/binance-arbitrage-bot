@@ -37,6 +37,7 @@ class ArbitrageBot {
   }
 
   async handleBookTicker(newPair: Pair) {
+    var hrTime = process.hrtime();
     const mids = this.client.getMidsPairs(newPair, this.config.fiat_symbol);
 
     for (let baseToQuote of mids) {
@@ -56,12 +57,6 @@ class ArbitrageBot {
       );
 
       if (directReturn >= this.config.profit_threshold) {
-        console.log(
-          baseToFiat.buyPrice,
-          baseToQuote.sellPrice,
-          quoteToFiat.sellPrice
-        );
-
         let maxFiat = this.calcDirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -73,6 +68,8 @@ class ArbitrageBot {
             directReturn * 100
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
+
+        console.log(hrTime[0] * 1000000 + hrTime[1] / 1000);
 
         await this.executeArbitrage(
           baseToFiat,
@@ -100,6 +97,8 @@ class ArbitrageBot {
             indirectReturn * 100
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
+
+        console.log(hrTime[0] * 1000000 + hrTime[1] / 1000);
 
         await this.executeArbitrage(
           baseToFiat,
@@ -196,6 +195,12 @@ class ArbitrageBot {
       fiatAmt = 30;
     }
 
+    const originals = [
+      { ...baseToFiat },
+      { ...baseToQuote },
+      { ...quoteToFiat },
+    ];
+
     try {
       const orders = createOrders(
         baseToFiat,
@@ -255,6 +260,7 @@ class ArbitrageBot {
         .catch(orderError(3));
 
       console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
+      console.log(originals);
     } catch (err: any) {
       console.log(`[${baseToQuote.symbol}]${err.message}`);
     }
