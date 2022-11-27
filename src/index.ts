@@ -37,7 +37,7 @@ class ArbitrageBot {
   }
 
   async handleBookTicker(newPair: Pair) {
-    var hrTime = process.hrtime();
+    const start = Date.now();
     const mids = this.client.getMidsPairs(newPair, this.config.fiat_symbol);
 
     for (let baseToQuote of mids) {
@@ -69,7 +69,7 @@ class ArbitrageBot {
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        console.log(hrTime[0] * 1000000 + hrTime[1] / 1000);
+        console.log(Date.now() - start);
 
         await this.executeArbitrage(
           baseToFiat,
@@ -98,7 +98,7 @@ class ArbitrageBot {
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        console.log(hrTime[0] * 1000000 + hrTime[1] / 1000);
+        console.log(Date.now() - start);
 
         await this.executeArbitrage(
           baseToFiat,
