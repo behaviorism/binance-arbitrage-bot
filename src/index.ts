@@ -1,8 +1,9 @@
 import { Config, loadConfig } from "./config";
-import { fmtNumber, matchDecimalPlaces } from "./utils";
+import { fmtNumber } from "./utils";
 import https from "https";
 import BinanceClient from "./binanceClient";
 import Pair from "./pair";
+import { createOrders } from "./orders";
 
 class ArbitrageBot {
   config: Config;
@@ -73,11 +74,12 @@ class ArbitrageBot {
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        await this.directArbitrage(
+        await this.executeArbitrage(
           baseToFiat,
           baseToQuote,
           quoteToFiat,
-          maxFiat
+          maxFiat,
+          true
         );
         break;
       } else if (indirectReturn >= this.config.profit_threshold) {
@@ -99,11 +101,12 @@ class ArbitrageBot {
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        await this.indirectArbitrage(
+        await this.executeArbitrage(
           baseToFiat,
           baseToQuote,
           quoteToFiat,
-          maxFiat
+          maxFiat,
+          false
         );
         break;
       }
@@ -182,27 +185,29 @@ class ArbitrageBot {
     );
   }
 
-  async directArbitrage(
+  async executeArbitrage(
     baseToFiat: Pair,
     baseToQuote: Pair,
     quoteToFiat: Pair,
-    fiatAmt: number
+    fiatAmt: number,
+    direct: boolean
   ) {
     if (fiatAmt > 30) {
       fiatAmt = 30;
     }
 
     try {
-      const baseAmtOut = matchDecimalPlaces(
-        baseToFiat.lotSize,
-        baseToFiat.quoteToBase(fiatAmt)
+      const orders = createOrders(
+        baseToFiat,
+        baseToQuote,
+        quoteToFiat,
+        fiatAmt,
+        direct,
+        this.config.transaction_fees
       );
+
       let res = await this.client.inner
-        .newOrder(baseToFiat.symbol, "BUY", "LIMIT", {
-          price: baseToFiat.buyPrice.toString(),
-          quantity: baseAmtOut,
-          timeInForce: "FOK",
-        })
+        .newOrder(...orders.firstOrder())
         .catch(orderError(1));
 
       if (res.data.status === "EXPIRED") {
@@ -215,33 +220,22 @@ class ArbitrageBot {
       // Check after first order if arbitrage is still available.
       // Otherwise, reverse first transaction
       if (
-        this.calcDirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
-        this.config.profit_threshold
+        direct
+          ? this.calcDirectReturn(baseToFiat, baseToQuote, quoteToFiat)
+          : this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
+            this.config.profit_threshold
       ) {
         console.log(
           `[${baseToQuote.symbol}]: arbitrage opportunity consumed. Reversing...`
         );
         await this.client.inner
-          .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
-            quantity: matchDecimalPlaces(
-              baseToFiat.lotSize,
-              baseAmtOut * (1 - this.config.transaction_fees)
-            ),
-          })
+          .newOrder(...orders.firstFalloutOrder())
           .catch(orderError(1, true));
         return;
       }
 
-      const baseAmtIn = matchDecimalPlaces(
-        baseToQuote.lotSize,
-        baseAmtOut * (1 - this.config.transaction_fees)
-      );
       res = await this.client.inner
-        .newOrder(baseToQuote.symbol, "SELL", "LIMIT", {
-          price: baseToQuote.sellPrice.toString(),
-          quantity: baseAmtIn,
-          timeInForce: "FOK",
-        })
+        .newOrder(...orders.secondOrder())
         .catch(orderError(2));
 
       if (res.data.status === "EXPIRED") {
@@ -249,124 +243,13 @@ class ArbitrageBot {
           `[${baseToQuote.symbol}][TRANSACTION-2]: transaction failed. Reversing...`
         );
         await this.client.inner
-          .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
-            quantity: matchDecimalPlaces(
-              baseToFiat.lotSize,
-              baseAmtOut * (1 - this.config.transaction_fees)
-            ),
-          })
+          .newOrder(...orders.firstFalloutOrder())
           .catch(orderError(2, true));
         return;
       }
 
-      const quoteAmtIn = matchDecimalPlaces(
-        quoteToFiat.lotSize,
-        baseToQuote.baseToQuote(baseAmtIn) * (1 - this.config.transaction_fees)
-      );
       await this.client.inner
-        .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
-          // price: quoteToFiat.sellPrice.toString(),
-          quantity: quoteAmtIn,
-          // timeInForce: "FOK",
-        })
-        .catch(orderError(3));
-
-      console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
-    } catch (err: any) {
-      console.log(`[${baseToQuote.symbol}]${err.message}`);
-    }
-  }
-
-  async indirectArbitrage(
-    baseToFiat: Pair,
-    baseToQuote: Pair,
-    quoteToFiat: Pair,
-    fiatAmt: number
-  ) {
-    if (fiatAmt > 30) {
-      fiatAmt = 30;
-    }
-
-    try {
-      const quoteAmtOut = matchDecimalPlaces(
-        quoteToFiat.lotSize,
-        quoteToFiat.quoteToBase(fiatAmt)
-      );
-      let res = await this.client.inner
-        .newOrder(quoteToFiat.symbol, "BUY", "LIMIT", {
-          price: quoteToFiat.buyPrice.toString(),
-          quantity: quoteAmtOut,
-          timeInForce: "FOK",
-        })
-        .catch(orderError(1));
-
-      // If first order failed, nothing happened
-      if (res.data.status === "EXPIRED") {
-        console.log(
-          `[${baseToQuote.symbol}][TRANSACTION-1]: transaction failed`
-        );
-        return;
-      }
-
-      // Check after first order if arbitrage is still available.
-      // Otherwise, reverse first transaction
-      if (
-        this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
-        this.config.profit_threshold
-      ) {
-        console.log(
-          `[${baseToQuote.symbol}]: arbitrage opportunity consumed. Reversing...`
-        );
-        await this.client.inner
-          .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
-            quantity: matchDecimalPlaces(
-              quoteToFiat.lotSize,
-              quoteAmtOut * (1 - this.config.transaction_fees)
-            ),
-          })
-          .catch(orderError(1, true));
-        return;
-      }
-
-      const baseAmtOut = matchDecimalPlaces(
-        baseToQuote.lotSize,
-        baseToQuote.quoteToBase(
-          quoteAmtOut * (1 - this.config.transaction_fees)
-        )
-      );
-      res = await this.client.inner
-        .newOrder(baseToQuote.symbol, "BUY", "LIMIT", {
-          price: baseToQuote.buyPrice.toString(),
-          quantity: baseAmtOut,
-          timeInForce: "FOK",
-        })
-        .catch(orderError(2));
-
-      if (res.data.status === "EXPIRED") {
-        console.log(
-          `[${baseToQuote.symbol}][TRANSACTION-2]: transaction failed. Reversing...`
-        );
-        await this.client.inner
-          .newOrder(quoteToFiat.symbol, "SELL", "MARKET", {
-            quantity: matchDecimalPlaces(
-              quoteToFiat.lotSize,
-              quoteAmtOut * (1 - this.config.transaction_fees)
-            ),
-          })
-          .catch(orderError(2, true));
-        return;
-      }
-
-      const baseAmtIn = matchDecimalPlaces(
-        baseToFiat.lotSize,
-        baseAmtOut * (1 - this.config.transaction_fees)
-      );
-      await this.client.inner
-        .newOrder(baseToFiat.symbol, "SELL", "MARKET", {
-          // price: baseToFiat.sellPrice.toString(),
-          quantity: baseAmtIn,
-          // timeInForce: "FOK",
-        })
+        .newOrder(...orders.thirdOrder())
         .catch(orderError(3));
 
       console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
