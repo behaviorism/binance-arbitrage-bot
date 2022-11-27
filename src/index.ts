@@ -15,7 +15,7 @@ class ArbitrageBot {
     this.config = config;
     this.client = new BinanceClient(config.api_key, config.secret_key, {
       httpsAgent: new https.Agent({ keepAlive: true }),
-      baseURL: "https://api4.binance.com",
+      baseURL: "https://api.binance.com",
     });
     this.locked = false;
   }
@@ -37,7 +37,7 @@ class ArbitrageBot {
   }
 
   async handleBookTicker(newPair: Pair) {
-    const start = Date.now();
+    const start = process.hrtime.bigint();
     const mids = this.client.getMidsPairs(newPair, this.config.fiat_symbol);
 
     for (let baseToQuote of mids) {
@@ -69,7 +69,7 @@ class ArbitrageBot {
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        console.log(Date.now() - start);
+        console.log(process.hrtime.bigint() - start);
 
         await this.executeArbitrage(
           baseToFiat,
@@ -80,12 +80,6 @@ class ArbitrageBot {
         );
         break;
       } else if (indirectReturn >= this.config.profit_threshold) {
-        console.log(
-          baseToFiat.sellPrice,
-          baseToQuote.buyPrice,
-          quoteToFiat.buyPrice
-        );
-
         let maxFiat = this.calcIndirectMaxFiat(
           baseToFiat,
           baseToQuote,
@@ -98,7 +92,7 @@ class ArbitrageBot {
           )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         );
 
-        console.log(Date.now() - start);
+        console.log(process.hrtime.bigint() - start);
 
         await this.executeArbitrage(
           baseToFiat,
