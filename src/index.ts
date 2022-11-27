@@ -1,5 +1,6 @@
 import { Config, loadConfig } from "./config";
-import { fmtNumber } from "./utils";
+// @ts-ignore
+import { fmtNumber, wait } from "./utils";
 import https from "https";
 import BinanceClient from "./binanceClient";
 import Pair from "./pair";
@@ -37,7 +38,6 @@ class ArbitrageBot {
   }
 
   async handleBookTicker(newPair: Pair) {
-    const start = process.hrtime.bigint();
     const mids = this.client.getMidsPairs(newPair, this.config.fiat_symbol);
 
     for (let baseToQuote of mids) {
@@ -63,15 +63,13 @@ class ArbitrageBot {
           quoteToFiat
         );
 
-        console.log(
-          `[DIRECT][${baseToQuote.symbol}]: RETURN: ${fmtNumber(
-            directReturn * 100
-          )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
-        );
+        // console.log(
+        //   `[DIRECT][${baseToQuote.symbol}]: RETURN: ${fmtNumber(
+        //     directReturn * 100
+        //   )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
+        // );
 
-        console.log(process.hrtime.bigint() - start);
-
-        await this.executeArbitrage(
+        await this.executeArbitrageBob(
           baseToFiat,
           baseToQuote,
           quoteToFiat,
@@ -86,15 +84,13 @@ class ArbitrageBot {
           quoteToFiat
         );
 
-        console.log(
-          `[INDIRECT][${baseToQuote.symbol}]: RETURN: ${fmtNumber(
-            indirectReturn * 100
-          )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
-        );
+        // console.log(
+        //   `[INDIRECT][${baseToQuote.symbol}]: RETURN: ${fmtNumber(
+        //     indirectReturn * 100
+        //   )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
+        // );
 
-        console.log(process.hrtime.bigint() - start);
-
-        await this.executeArbitrage(
+        await this.executeArbitrageBob(
           baseToFiat,
           baseToQuote,
           quoteToFiat,
@@ -255,6 +251,68 @@ class ArbitrageBot {
 
       console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
       console.log(originals);
+    } catch (err: any) {
+      console.log(`[${baseToQuote.symbol}]${err.message}`);
+    }
+  }
+
+  async executeArbitrageBob(
+    baseToFiat: Pair,
+    baseToQuote: Pair,
+    quoteToFiat: Pair,
+    fiatAmt: number,
+    direct: boolean
+  ) {
+    if (fiatAmt > 30) {
+      fiatAmt = 30;
+    }
+
+    try {
+      const orders = createOrders(
+        baseToFiat,
+        baseToQuote,
+        quoteToFiat,
+        fiatAmt,
+        direct,
+        this.config.transaction_fees
+      );
+
+      let res1 = await this.client.inner
+        .newOrder(...orders.firstOrder())
+        .catch(orderError(1));
+
+      await wait(10);
+
+      // Check after first order if arbitrage is still available.
+      // Otherwise, reverse first transaction
+      if (
+        direct
+          ? this.calcDirectReturn(baseToFiat, baseToQuote, quoteToFiat)
+          : this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
+            this.config.profit_threshold
+      ) {
+        console.log(
+          `[${baseToQuote.symbol}]: arbitrage opportunity consumed. Reversing...`
+        );
+        await this.client.inner
+          .newOrder(...orders.firstFalloutOrder())
+          .catch(orderError(1, true));
+        return;
+      }
+
+      let res2 = this.client.inner
+        .newOrder(...orders.secondOrder())
+        .catch(orderError(2));
+
+      await wait(10);
+
+      let res3 = this.client.inner
+        .newOrder(...orders.thirdOrder())
+        .catch(orderError(3));
+
+      await Promise.all([res1, res2, res3]);
+
+      console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
     } catch (err: any) {
       console.log(`[${baseToQuote.symbol}]${err.message}`);
     }
