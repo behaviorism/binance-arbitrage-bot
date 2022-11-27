@@ -15,7 +15,7 @@ class ArbitrageBot {
     this.config = config;
     this.client = new BinanceClient(config.api_key, config.secret_key, {
       httpsAgent: new https.Agent({ keepAlive: true }),
-      // baseURL: "https://testnet.binance.vision",
+      baseURL: "https://api4.binance.com",
     });
     this.locked = false;
   }
@@ -206,9 +206,11 @@ class ArbitrageBot {
         this.config.transaction_fees
       );
 
+      let start = Date.now();
       let res = await this.client.inner
         .newOrder(...orders.firstOrder())
         .catch(orderError(1));
+      console.log(Date.now() - start);
 
       if (res.data.status === "EXPIRED") {
         console.log(
