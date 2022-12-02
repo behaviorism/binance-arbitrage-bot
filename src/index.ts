@@ -18,6 +18,7 @@ class ArbitrageBot {
       httpsAgent: new https.Agent({ keepAlive: true }),
       baseURL: "https://api.binance.com",
     });
+    // Lock to avoid processing multiple arbitrages at the same time
     this.locked = false;
   }
 
@@ -69,7 +70,7 @@ class ArbitrageBot {
         //   )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         // );
 
-        await this.executeArbitrageBob(
+        await this.executeArbitrage(
           baseToFiat,
           baseToQuote,
           quoteToFiat,
@@ -90,7 +91,7 @@ class ArbitrageBot {
         //   )}% | LIQUIDITY: ${fmtNumber(maxFiat)} ${this.config.fiat_symbol}`
         // );
 
-        await this.executeArbitrageBob(
+        await this.executeArbitrage(
           baseToFiat,
           baseToQuote,
           quoteToFiat,
@@ -181,16 +182,6 @@ class ArbitrageBot {
     fiatAmt: number,
     direct: boolean
   ) {
-    if (fiatAmt > 30) {
-      fiatAmt = 30;
-    }
-
-    const originals = [
-      { ...baseToFiat },
-      { ...baseToQuote },
-      { ...quoteToFiat },
-    ];
-
     try {
       const orders = createOrders(
         baseToFiat,
@@ -201,11 +192,9 @@ class ArbitrageBot {
         this.config.transaction_fees
       );
 
-      let start = Date.now();
       let res = await this.client.inner
         .newOrder(...orders.firstOrder())
         .catch(orderError(1));
-      console.log(Date.now() - start);
 
       if (res.data.status === "EXPIRED") {
         console.log(
@@ -248,69 +237,6 @@ class ArbitrageBot {
       await this.client.inner
         .newOrder(...orders.thirdOrder())
         .catch(orderError(3));
-
-      console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
-      console.log(originals);
-    } catch (err: any) {
-      console.log(`[${baseToQuote.symbol}]${err.message}`);
-    }
-  }
-
-  async executeArbitrageBob(
-    baseToFiat: Pair,
-    baseToQuote: Pair,
-    quoteToFiat: Pair,
-    fiatAmt: number,
-    direct: boolean
-  ) {
-    if (fiatAmt > 30) {
-      fiatAmt = 30;
-    }
-
-    try {
-      const orders = createOrders(
-        baseToFiat,
-        baseToQuote,
-        quoteToFiat,
-        fiatAmt,
-        direct,
-        this.config.transaction_fees
-      );
-
-      let res1 = await this.client.inner
-        .newOrder(...orders.firstOrder())
-        .catch(orderError(1));
-
-      await wait(10);
-
-      // Check after first order if arbitrage is still available.
-      // Otherwise, reverse first transaction
-      if (
-        direct
-          ? this.calcDirectReturn(baseToFiat, baseToQuote, quoteToFiat)
-          : this.calcIndirectReturn(baseToFiat, baseToQuote, quoteToFiat) <
-            this.config.profit_threshold
-      ) {
-        console.log(
-          `[${baseToQuote.symbol}]: arbitrage opportunity consumed. Reversing...`
-        );
-        await this.client.inner
-          .newOrder(...orders.firstFalloutOrder())
-          .catch(orderError(1, true));
-        return;
-      }
-
-      let res2 = this.client.inner
-        .newOrder(...orders.secondOrder())
-        .catch(orderError(2));
-
-      await wait(10);
-
-      let res3 = this.client.inner
-        .newOrder(...orders.thirdOrder())
-        .catch(orderError(3));
-
-      await Promise.all([res1, res2, res3]);
 
       console.log(`[${baseToQuote.symbol}]: completed arbitrage`);
     } catch (err: any) {
